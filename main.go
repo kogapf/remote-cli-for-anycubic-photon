@@ -284,7 +284,7 @@ func (p *Printer) status() float64 {
 	re := regexp.MustCompile(`[0-9]+`)
 	numbers := re.FindAllString(p.Read(), 2)
 	if len(numbers) != 2 {
-		return NaN // == not printing
+		return 0.0 // == not printing
 	}
 	//fmt.Println("%s, %s\n", numbers[0], numbers[1])
 	cur_bytes, err := strconv.Atoi(numbers[0])
@@ -332,6 +332,7 @@ func (p *Printer) upload(file string) {
 	var counter int = 0
 
 	start := time.Now()
+	// TODO replicate this functionality for download
 	for {
 		f.Seek(offset, 0)
 		var end int64
@@ -354,10 +355,13 @@ func (p *Printer) upload(file string) {
 		buf[n+5] = 0x83
 		p.conn.Write(buf[:end+6])
 		msg := p.Read()
-		progress := float32((counter)*0x500+int(end)) / float32(size)
+		progress := float32(offset) / float32(size)
 		elapsed := time.Now()
 		speed := float32(counter*0x500) / float32(elapsed.Sub(start).Seconds())
-		fmt.Printf("Progress: %02.1f%% Speed %f [byte/s], offset %d, filesize %d\n", 100.0*progress, speed, offset, size)
+		estRemain := float32(size-offset) / speed
+		seconds := uint(estRemain) % 60
+		minutes := estRemain / 60
+		fmt.Printf("Progress: %02.1f%%, Est. time remaining %dm%ds, Speed %f [byte/s]", 100.0*progress, speed, int(minutes), seconds)
 		counter++
 		fmt.Printf("%s\n", msg)
 		if msg[0:2] == "ok" {
@@ -406,21 +410,24 @@ func printFilesFormatted() {}
 // target: 0 is the lower motherboard fan, 1 is the upper fan
 func (p *Printer) Fan(target int, state int) bool {
 	switch target {
-	case 0: // lower matherboard fan
-		if state >= -2 && state <= 1 {
+	case 0: // top fan
+		if (state >= -2) && (state <= 1) {
 			p.SendGcode("M8030 T" + strconv.Itoa(state))
+			fmt.Println(p.Read())
 			return true
 		}
 		return false
-	case 1: // upper fan
-		if state >= -2 && state >= 0 {
+	case 1: // bottom fan
+		if (state >= -2) && (state <= 0) {
 			p.SendGcode("M8030 I" + strconv.Itoa(state))
+			fmt.Println(p.Read())
 			return true
 		}
 		return false
 	default:
 		return false
 	}
+	return false
 }
 
 func printSubcommands() {
@@ -438,8 +445,8 @@ func printSubcommands() {
 	// resume
 	// stop
 	fmt.Println("beep")
-	fmt.Println("top-fan [always_off | always_on | during_printing]")
-	fmt.Println("bottom-fan [always_off | always_on | during_printing | during led operation]")
+	fmt.Println("bottom-fan [always_off | always_on | during_printing]")
+	fmt.Println("top-fan [always_off | always_on | during_printing | during led operation]")
 	fmt.Println("alias NAME IP:PORT")
 	// save
 }
@@ -469,31 +476,31 @@ func main() {
 
 	switch os.Args[1] {
 	// top-fan [always_on | always_off | during_printing]
-	case "top-fan":
+	case "bottom-fan":
 		var p Printer
-		connectCmd.Parse(os.Args[2:])
+		//connectCmd.Parse(os.Args[2:])
 		if *photonDevice == "" {
 			p.readDefaults(photonDevice)
 		}
 		p.Connect(*photonDevice)
 		var err bool
 		switch os.Args[2] {
-		case "always_off":
+		case "on":
 			err = p.Fan(1, -1)
-		case "always_on":
+		case "off":
 			err = p.Fan(1, 0)
 		case "during_printing":
 			err = p.Fan(1, -2)
 		}
-		if err {
+		if err == false {
 			fmt.Println("Invalid fan setting.")
 			os.Exit(1)
 		}
 		os.Exit(0)
 	// bottom-fan [always_on | always_off | during_printing | during
 	// led_operation]
-	case "bottom-fan": // motherboard fan
-		connectCmd.Parse(os.Args[2:])
+	case "top-fan": // motherboard fan
+		//connectCmd.Parse(os.Args[2:])
 		var p Printer
 		if *photonDevice == "" {
 			p.readDefaults(photonDevice)
@@ -501,16 +508,16 @@ func main() {
 		var err bool
 		p.Connect(*photonDevice)
 		switch os.Args[2] {
-		case "always_off":
+		case "off":
 			err = p.Fan(0, 0)
-		case "always_on":
+		case "on":
 			err = p.Fan(0, -1)
 		case "during_printing":
 			err = p.Fan(0, -2)
 		case "during_led_operation":
 			err = p.Fan(0, 1)
 		}
-		if err {
+		if err == false {
 			fmt.Println("Invalid fan setting.")
 			os.Exit(1)
 		}
@@ -533,7 +540,7 @@ func main() {
 		}
 		p.Connect(*photonDevice)
 		status := p.status()
-		if status == NaN {
+		if status == 0.0 {
 			fmt.Println("Not printing.")
 		} else {
 			fmt.Printf("Printing progress: %2.1f%%\n", 100.0*status)
