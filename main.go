@@ -90,7 +90,7 @@ type Printer struct {
 func ByteCountDecimal(b int64) string {
 	const unit = 1000
 	if b < unit {
-		return fmt.Sprintf("%d B", b)
+		return fmt.Sprintf("%d B ", b)
 	}
 	div, exp := int64(unit), 0
 	for n := b / unit; n >= unit; n /= unit {
@@ -470,12 +470,25 @@ func (p *Printer) Print(file string) bool {
 	return false
 }
 
-// TODO
-func readPrinterConfig(p *Printer, path string) {
+// TODO: check returns
+func (p *Printer) Pause() bool {
+	p.SendGcode("M25")
+	msg := p.Read()
+	if msg[0:2] == "ok" {
+		return true
+	}
+	return false
 }
 
-// TODO
-func printFilesFormatted() {}
+// TODO: check returns
+func (p *Printer) Stop() bool {
+	p.SendGcode("M29")
+	msg := p.Read()
+	if msg[0:2] == "ok" {
+		return true
+	}
+	return false
+}
 
 // target: 0 is the lower motherboard fan, 1 is the upper fan
 func (p *Printer) Fan(target int, state int) bool {
@@ -626,6 +639,22 @@ func main() {
 		}
 		p.Connect(*photonDevice)
 		p.Print(os.Args[2])
+	case "pause":
+		connectCmd.Parse(os.Args[3:])
+		var p Printer
+		if *photonDevice == "" {
+			p.readDefaults(photonDevice)
+		}
+		p.Connect(*photonDevice)
+		p.Pause()
+	case "stop":
+		connectCmd.Parse(os.Args[3:])
+		var p Printer
+		if *photonDevice == "" {
+			p.readDefaults(photonDevice)
+		}
+		p.Connect(*photonDevice)
+		p.Stop()
 		// make the printer beep
 	case "beep":
 		connectCmd.Parse(os.Args[2:])

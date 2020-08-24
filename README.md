@@ -23,6 +23,7 @@ photos list
 photos shell
 	Opens an interactive shell. Neat for testing raw gcodes and analyzing the return messages.
 photos [upload | download | delete] FILE
+photos print $FILE
 photos bottom-fan [off | on | during_printing]
 photos top-fan [off | on | during_printing | during_led_operation]
 	Fan settings are not saved, i.e. they reset when the printer is turned off and on again.
