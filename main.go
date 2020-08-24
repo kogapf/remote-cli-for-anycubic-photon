@@ -69,14 +69,13 @@ import (
 	"time"
 )
 
-const var gcodes map[string]string = {
-	"info": "M99999", // mac version, ip address, version (???), id, name
-	"beep": "M300",
-	"firmware_version": "M4002",
-	"file_list": "M20",
-	"initiate_download": ""
+var gcodes = map[string]string{
+	"info":              "M99999", // mac version, ip address, version (???), id, name
+	"beep":              "M300",
+	"firmware_version":  "M4002",
+	"file_list":         "M20",
+	"initiate_download": "",
 }
-
 
 // Printer defines a physical printer
 type Printer struct {
@@ -165,14 +164,11 @@ func (p Printer) shell() {
 
 	fmt.Println("Starting shell to Anycubic Photon")
 
-	ip := "192.168.2.111"
-	port := "3000"
-
 	// ping first
 	reader := bufio.NewReader(os.Stdin)
 
 	// no timeout needed here
-	conn, err := net.Dial("udp", ip+":"+port)
+	conn, err := net.Dial("udp", p.Addr)
 	if err != nil {
 		fmt.Println("Connection failed.")
 		os.Exit(1)
