@@ -52,20 +52,31 @@
 
 package main
 
-import "fmt"
-import "encoding/json"
-import "time"
-import "regexp"
-import "encoding/binary"
-import "os"
-import "os/user"
-import "io/ioutil"
-import "net"
-import "strings"
-import "bufio"
-import "flag"
-import "io"
-import "strconv"
+import (
+	"bufio"
+	"encoding/binary"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"io/ioutil"
+	"net"
+	"os"
+	"os/user"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const var gcodes map[string]string = {
+	"info": "M99999", // mac version, ip address, version (???), id, name
+	"beep": "M300",
+	"firmware_version": "M4002",
+	"file_list": "M20",
+	"initiate_download": ""
+}
+
 
 // Printer defines a physical printer
 type Printer struct {
@@ -75,6 +86,19 @@ type Printer struct {
 	//id       string
 	Name string
 	conn net.Conn
+}
+
+func ByteCountDecimal(b int64) string {
+	const unit = 1000
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "kMGTPE"[exp])
 }
 
 func errCheck(err error, message string) {
@@ -92,18 +116,29 @@ func (p *Printer) Ping() bool {
 	return false
 }
 
+func (p *Printer) resetTimeout(t time.Time) {
+}
+
+// a timeout of 1000ms causes download to fail
+const timeout string = "5000ms"
+
 func (p *Printer) Connect(target string) bool {
-	duration, err := time.ParseDuration("1000ms")
+	duration, err := time.ParseDuration(timeout)
 	errCheck(err, "Couldn't parse duration.")
 	conn, err := net.DialTimeout("udp", target, duration)
 	if err != nil {
 		fmt.Println("Connection failed. Error %s\n", err.Error())
 		os.Exit(1)
 	}
+	err = conn.SetDeadline(time.Now().Add(duration))
+	errCheck(err, "Couldm't set deadline.")
 	_, err = conn.Write([]byte("M99999"))
 	errCheck(err, "Couldn't write to device.")
 	var buf [512]byte
 	_, err = conn.Read(buf[0:])
+	if err != nil {
+		return false
+	}
 	// TODO: parse this string properly
 	//fmt.Printf("Printer returned: %s", string(buf[0:n]))
 
@@ -190,12 +225,20 @@ func (p Printer) shell() {
 func (p *Printer) SendGcode(gcode string) {
 	_, err := p.conn.Write([]byte(gcode))
 	errCheck(err, "Couldn't send gcode.")
+	duration, err := time.ParseDuration(timeout)
+	errCheck(err, "Couldn't parse duration.")
+	err = p.conn.SetDeadline(time.Now().Add(duration))
+	errCheck(err, "Couldm't set deadline.")
 }
 
 func (p *Printer) Read() (msg string) {
 	var buf [512]byte
 	n, err := p.conn.Read(buf[0:])
 	errCheck(err, "Couldn't read from connection.")
+	duration, err := time.ParseDuration(timeout)
+	errCheck(err, "Couldn't parse duration.")
+	err = p.conn.SetDeadline(time.Now().Add(duration))
+	errCheck(err, "Couldm't set deadline.")
 	msg = strings.TrimRight(string(buf[0:n]), "\n\r")
 	return msg
 }
@@ -221,47 +264,56 @@ func (p *Printer) readFilelist() (files []string, sizes []int) {
 
 // TODO clean this, it's dirty as fuck
 func (p *Printer) download(file string, path string) {
+	// initiate download and set dest file name
 	p.SendGcode("M6032 '" + file + "'")
 	ret := p.Read()
 	if ret[0:2] != "ok" {
 		fmt.Printf("not OK: %s\n", ret)
-		p.SendGcode("M22")
+		p.SendGcode("M22") // eject and remount the usb drive
 		p.Read()
-		p.SendGcode("M6032 '" + file + "'")
+		p.SendGcode("M6032 '" + file + "'") // try again
 		ret = p.Read()
 	}
+
+	// set up some variables for download
 	length, _ := strconv.Atoi(strings.TrimRight(ret[5:], "\n\r"))
-	fmt.Printf("Length: %d\n", length)
+	//fmt.Printf("Length: %d\n", length)
 	var buf [0x500 + 6]byte
 	fo, err := os.Create(file)
-	defer fo.Close()
 	errCheck(err, "Couldn't create output file.")
+	defer fo.Close()
 	var offset int = 0
 	counter := 0
 	for {
 		counter++
-		fmt.Printf("Counter: %3d, Progerss %f\n", counter, float32(offset)/float32(length))
+		fmt.Printf("\rCounter: %3d, Progerss %f", counter, float32(offset)/float32(length))
 		if offset >= length {
 			fmt.Println("End reached")
-			fo.Close()
+			p.SendGcode("M29") // leave downloading mode TODO: is this right?
+			fmt.Println(p.Read())
+			//fo.Close()
 			return
 		}
-		p.SendGcode("M3000")
+		p.SendGcode("M3000") // now we are in downloading mode
 		n, err := p.conn.Read(buf[0:])
 		errCheck(err, "Couldn't readfrom connection.")
+		duration, err := time.ParseDuration(timeout)
+		errCheck(err, "Couldn't parse duration.")
+		err = p.conn.SetDeadline(time.Now().Add(duration))
+		errCheck(err, "Couldm't set deadline.")
 		offset += n - 6
 		if buf[n-1] != 0x83 {
 			fmt.Println("Error 83")
 			os.Exit(1)
 		}
-		maxval := binary.LittleEndian.Uint32(buf[n-7 : n-3])
-		fmt.Printf("maxwal : %x\n", maxval)
+		//maxval := binary.LittleEndian.Uint32(buf[n-7 : n-3])
+		//fmt.Printf("maxwal : %x\n", maxval)
 		var checksum byte = 0
 		for i := 0; i < n-2; i++ {
 			checksum ^= buf[i]
 		}
 		if checksum == buf[n-2] {
-			fmt.Println("Checksum success.")
+			//fmt.Println("Checksum success.")
 		} else {
 			fmt.Println("Erroneous checksum detected success.")
 			os.Exit(1)
@@ -311,32 +363,47 @@ func (p *Printer) Beep() {
 	return
 }
 
+// this seems to be the maximum size possible, everything larger generates an
+// error
+// it is not far off from the size 0x500 used in the implementation in chitubox
+// doesn't change even with faster usb drive, seems to be hard-coded into some
+// buffer
+const uploadPacketSize = 0x536
+
 // TODO clean this up
 func (p *Printer) upload(file string) {
 	f, err := os.Open(file)
 	errCheck(err, "Couldn't read file")
-	var buf [0x500 + 6]byte
+	if err != nil {
+		os.Exit(1)
+	}
+	var buf [uploadPacketSize + 6]byte
 
 	// prepare sending
 	p.SendGcode("M28 " + file)
 	ret := p.Read()
 	if ret[0:2] != "ok" {
-		fmt.Println("NOT OK")
-		panic(1)
+		fmt.Printf("NOT OK: %s\n", ret)
+		p.SendGcode("M29")
+		msg := p.Read()
+		fmt.Println(msg)
+		os.Exit(1)
 	}
 
 	var offset int64 = 0
 	fi, _ := f.Stat()
 	size := fi.Size()
 
-	var counter int = 0
+	var counter int = 0 // packet counter (including resends)
 
 	start := time.Now()
 	// TODO replicate this functionality for download
+	var loopCounter int = 0
+	var updateInterval int = 100 // every this loop, the Progressbar will be updated
 	for {
 		f.Seek(offset, 0)
 		var end int64
-		if size-offset < 0x500 {
+		if size-offset < uploadPacketSize {
 			end = size - offset
 		} else {
 			end = int64(len(buf) - 6)
@@ -354,21 +421,28 @@ func (p *Printer) upload(file string) {
 		buf[n+4] = checksum
 		buf[n+5] = 0x83
 		p.conn.Write(buf[:end+6])
+		duration, err := time.ParseDuration(timeout)
+		errCheck(err, "Couldn't parse duration.")
+		err = p.conn.SetDeadline(time.Now().Add(duration))
+		errCheck(err, "Couldm't set deadline.")
 		msg := p.Read()
 		progress := float32(offset) / float32(size)
 		elapsed := time.Now()
-		speed := float32(counter*0x500) / float32(elapsed.Sub(start).Seconds())
+		speed := float32(counter*uploadPacketSize) / float32(elapsed.Sub(start).Seconds())
 		estRemain := float32(size-offset) / speed
 		seconds := uint(estRemain) % 60
 		minutes := estRemain / 60
-		fmt.Printf("Progress: %02.1f%%, Est. time remaining %dm%ds, Speed %f [byte/s]", 100.0*progress, speed, int(minutes), seconds)
+		if loopCounter%updateInterval == 1 {
+			fmt.Printf("\rProgress: %4.1f%%, Est. time remaining %2dm%02ds, Speed %4.2f [kByte/s]", 100.0*progress, int(minutes), seconds, speed/1024)
+		}
+		loopCounter++
 		counter++
-		fmt.Printf("%s\n", msg)
+		//fmt.Printf("%s\n", msg)
 		if msg[0:2] == "ok" {
 			if (offset) >= size {
-				p.SendGcode("M4012 I1 T" + strconv.Itoa(int(size)))
-				msg = p.Read()
-				fmt.Printf("%s\n", msg)
+				//p.SendGcode("M4012 I1 T" + strconv.Itoa(int(size)))
+				//msg = p.Read()
+				//fmt.Printf("%s\n", msg)
 				p.SendGcode("M29")
 				msg = p.Read()
 				fmt.Printf("%s\n", msg)
@@ -600,8 +674,13 @@ func main() {
 		//		printFilesFormatted(files)
 		files, sizes := p.readFilelist()
 		for i := 0; i < len(files); i++ {
-			fmt.Printf("Size %10d, \tFile   %s\n", sizes[i], files[i])
+			fmt.Printf("%9s  %s\n", ByteCountDecimal(int64(sizes[i])), files[i])
 		}
+		total := 0
+		for i := 0; i < len(sizes); i++ {
+			total += sizes[i]
+		}
+		fmt.Printf("total: %s\n", ByteCountDecimal(int64(total)))
 		os.Exit(0)
 		// download FILE
 		// Download FILE from the sd-card
