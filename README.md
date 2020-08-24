@@ -1,6 +1,8 @@
 # Photos
 
-A small tool for interfacing your Anycubic Photon 3D Printer from the command line.
+A small tool for interfacing with your Anycubic Photon 3D Printer from the command line.
+
+It is inspired by the [Universal Photon Network Controller](https://github.com/Photonsters/Universal-Photon-Network-Controller), which didn't work reliably for me on my Linux system and the code of which I considered to be _too messy_. Though the code presented herein is still considered alpha quality and thus requires some cleaning. But it works.
 
 ## Requirements
 
@@ -9,18 +11,23 @@ A small tool for interfacing your Anycubic Photon 3D Printer from the command li
 
 ## Installation
 
-Run `sudo make install`.
+Run `sudo make install`. (Take note that only a symbolic link is created to `/usr/local/bin/photos`.)
 
 ## Usage
 
 ```
 photos connect --target IP:PORT
-	Connect with the printer and saves the information at ~/.photos
+	Connect to the printer and save the information at ~/.photos
 photos list
 	List files on the plugged in USB drive
+photos shell
+	Opens an interactive shell. Neat for testing raw gcodes and analyzing the return messages.
 photos upload FILE
 photos download FILE
 photos delete FILE
+photos top-fan [always_on | always_off | during_printing]
+photos bottom-fan [on | off | during-print]
+	Fan settings are not saved, i.e. they reset when the printer is turned off and on again.
 ```
 
-There are other commands, documentation is yet to be do. Look at the source.
+There are other commands, documentation is yet to be done. Look at the source.
