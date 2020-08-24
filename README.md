@@ -22,11 +22,9 @@ photos list
 	List files on the plugged in USB drive
 photos shell
 	Opens an interactive shell. Neat for testing raw gcodes and analyzing the return messages.
-photos upload FILE
-photos download FILE
-photos delete FILE
-photos top-fan [always_on | always_off | during_printing]
-photos bottom-fan [on | off | during-print]
+photos [upload | download | delete] FILE
+photos bottom-fan [off | on | during_printing]
+photos top-fan [off | on | during_printing | during_led_operation]
 	Fan settings are not saved, i.e. they reset when the printer is turned off and on again.
 ```
 
